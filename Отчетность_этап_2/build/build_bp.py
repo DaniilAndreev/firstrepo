@@ -595,7 +595,7 @@ def build(pages_map):
     # ------------------------------------------------------------- источники
     heading_struct(doc, "Перечень использованных источников")
     for i, s in enumerate(SOURCES):
-        para(doc, f"{i + 1}. {s}", first_line=Cm(0))
+        para(doc, f"{i + 1}. {s}", first_line=Cm(0), align=A.LEFT)
     return doc
 
 

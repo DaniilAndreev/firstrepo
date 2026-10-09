@@ -68,12 +68,12 @@ def main():
     para(doc, f"по договору о предоставлении гранта № {C['contract_no']} от {C['contract_date']} "
               f"(программа {C['program']}, этап {C['stage']})", align=A.CENTER, first_line=Cm(0))
     para(doc, f"Тема: «{C['theme']}»", align=A.CENTER, first_line=Cm(0))
-    para(doc, f"Грантополучатель: {C['org_full']}", align=A.CENTER, first_line=Cm(0), after=12)
+    para(doc, f"Грантополучатель: {C['org_full']}".replace("«Вкус Технологии»", "«Вкус\u00a0Технологии»"), align=A.CENTER, first_line=Cm(0), after=12)
     rows = [[str(i + 1), m, yn, cm] for i, (m, yn, cm) in enumerate(ROWS)]
     rows.append(["Планируемые мероприятия"])
     sep_idx = len(rows) - 1
     for i, (m, yn, cm) in enumerate(PLANNED):
-        rows.append([str(i + 1), m, "", cm])
+        rows.append([str(i + 1), m, "план", cm])
     table(doc, "", "", ["№", "Мероприятие / показатель", "Да / Нет", "Комментарий"], rows,
           [10, 70, 20, 65], font_size=11, header_size=11,
           align_cols=[A.CENTER, A.LEFT, A.CENTER, A.LEFT], caption=False, merge_rows=[sep_idx])

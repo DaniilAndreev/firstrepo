@@ -354,6 +354,12 @@ def table(doc, number, title, header, rows, widths_mm, font_size=12, header_size
             val = row[ci] if ci < len(row) else ""
             _cell_text(r.cells[ci], val, size=font_size, align=align_cols[ci])
     _set_col_widths(t, widths_mm)
+    # небольшие таблицы не разрывать между страницами: keepNext у всех абзацев, кроме последней строки
+    if len(rows) <= 8:
+        for row in t.rows[:-1]:
+            for c in row.cells:
+                for pp in c.paragraphs:
+                    pp.paragraph_format.keep_with_next = True
     # отступ после таблицы
     sp = doc.add_paragraph()
     _para_fmt(sp, first_line=Cm(0), spacing=1.0, after=6)
