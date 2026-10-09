@@ -219,7 +219,7 @@ def heading_struct(doc, text, page_break=True):
 def heading_sub(doc, text, page_break=False, before=0, after=0):
     """Заголовок подраздела (1.1 …): жирный, с абзацного отступа, без точки в конце."""
     p = doc.add_paragraph()
-    _para_fmt(p, align=WD_ALIGN_PARAGRAPH.JUSTIFY, first_line=Cm(1.25), keep_next=True,
+    _para_fmt(p, align=WD_ALIGN_PARAGRAPH.LEFT, first_line=Cm(1.25), keep_next=True,
               page_break_before=page_break, before=before, after=after)
     run = p.add_run(text)
     _set_run_font(run, size=14, bold=True)
@@ -230,7 +230,7 @@ def heading_sub(doc, text, page_break=False, before=0, after=0):
 def heading_minor(doc, text):
     """Подзаголовок внутри подраздела (без номера): жирный, с абзацного отступа."""
     p = doc.add_paragraph()
-    _para_fmt(p, align=WD_ALIGN_PARAGRAPH.JUSTIFY, first_line=Cm(1.25), keep_next=True)
+    _para_fmt(p, align=WD_ALIGN_PARAGRAPH.LEFT, first_line=Cm(1.25), keep_next=True)
     run = p.add_run(text)
     _set_run_font(run, size=14, bold=True)
     return p
@@ -368,7 +368,7 @@ def table(doc, number, title, header, rows, widths_mm, font_size=12, header_size
 
 # ----------------------------------------------------------------- рисунки
 
-def figure(doc, number, title, image_path, width_mm=TEXT_WIDTH_MM):
+def figure(doc, number, title, image_path, width_mm=158):
     p = doc.add_paragraph()
     _para_fmt(p, align=WD_ALIGN_PARAGRAPH.CENTER, first_line=Cm(0), keep_next=True, before=6)
     p.add_run().add_picture(image_path, width=Mm(width_mm))
