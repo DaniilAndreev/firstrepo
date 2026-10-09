@@ -74,6 +74,65 @@ def _para_fmt(p, align=WD_ALIGN_PARAGRAPH.JUSTIFY, first_line=Cm(1.25), spacing=
     pf.widow_control = True
 
 
+# ---------------------------------------------------------------- порядок элементов OOXML
+# Word открывает файл только если дочерние элементы стоят в порядке схемы; LibreOffice такое терпит.
+_W_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+ORDER_SEQ = {
+    "tblPr": ["tblStyle", "tblpPr", "tblOverlap", "bidiVisual", "tblStyleRowBandSize", "tblStyleColBandSize",
+              "tblW", "jc", "tblCellSpacing", "tblInd", "tblBorders", "shd", "tblLayout", "tblCellMar",
+              "tblLook", "tblCaption", "tblDescription", "tblPrChange"],
+    "tcPr": ["cnfStyle", "tcW", "gridSpan", "hMerge", "vMerge", "tcBorders", "shd", "noWrap", "tcMar",
+             "textDirection", "tcFitText", "vAlign", "hideMark", "headers", "cellIns", "cellDel", "cellMerge",
+             "tcPrChange"],
+    "sectPr": ["headerReference", "footerReference", "footnotePr", "endnotePr", "type", "pgSz", "pgMar",
+               "paperSrc", "pgBorders", "lnNumType", "pgNumType", "cols", "formProt", "vAlign", "noEndnote",
+               "titlePg", "textDirection", "bidi", "rtlGutter", "docGrid", "printerSettings", "sectPrChange"],
+}
+
+
+def _local(tag):
+    return tag.split("}")[1] if isinstance(tag, str) and "}" in tag else tag
+
+
+def _normalize_element(el, seq, dedupe):
+    if dedupe:
+        seen = set()
+        for c in [c for c in el if isinstance(c.tag, str)]:
+            name = _local(c.tag)
+            if name in seen:
+                el.remove(c)
+            else:
+                seen.add(name)
+    kids = [c for c in el if isinstance(c.tag, str)]
+    rank = {n: i for i, n in enumerate(seq)}
+    ordered = sorted(kids, key=lambda c: rank.get(_local(c.tag), len(seq)))
+    if [id(c) for c in ordered] != [id(c) for c in kids]:
+        for c in kids:
+            el.remove(c)
+        for c in ordered:
+            el.append(c)
+
+
+def normalize_order(doc):
+    for part in doc.part.package.iter_parts():
+        el = getattr(part, "_element", None)
+        if el is None or not str(part.partname).startswith("/word/"):
+            continue
+        for tag, seq in ORDER_SEQ.items():
+            for node in list(el.iter(_W_NS + tag)):
+                _normalize_element(node, seq, dedupe=tag in ("tblPr", "tcPr"))
+
+
+def _install_save_hook(doc):
+    orig = doc.save
+
+    def save(path_or_stream):
+        normalize_order(doc)
+        return orig(path_or_stream)
+
+    doc.save = save
+
+
 def new_document():
     doc = Document()
     # --- стили по умолчанию
@@ -160,6 +219,7 @@ def new_document():
         sectPr.append(pg)
     pg.set(qn("w:start"), "1")
     # удалить пустой первый абзац, если есть
+    _install_save_hook(doc)
     return doc
 
 
