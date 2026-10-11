@@ -1,97 +1,159 @@
 # -*- coding: utf-8 -*-
-"""Автопроверка docx: запрещённые слова, сквозная нумерация, ссылки на объекты, список [УТОЧНИТЬ]."""
-import re, sys
+"""Проверка docx: запрещенные слова, URL вне перечня источников, нумерация и ссылки на объекты,
+цитирование источников, порядок литер приложений, порядок элементов OOXML, размеры шрифта, метки [УТОЧНИТЬ]."""
+import re
+import sys
+import zipfile
+import collections
+from lxml import etree
 from docx import Document
-from docx.oxml.ns import qn
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 
-FORBID = [r"исследован", r"исследовани", r"\bНИР\b", r"\bНИОКР\b", r"\bTRL\b", r"\bУГТ\b",
-          r"\bмы\b", r"\bнами\b", r"\bнаш(а|е|и|у|ей|его|им|их|ему)?\b", r"\bя\b", r"уровн\w* готовности"]
-URL = [r"https?://", r"www\."]
+FORBID = [r"исследован", r"\bНИР\b", r"\bНИОКР\b", r"\bTRL\b", r"\bУГТ\b", r"\bмы\b", r"\bнами\b",
+          r"\bнаш(а|е|и|у|ей|его|им|их|ему)?\b", r"\bя\b", r"уровн\w* готовности"]
+W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+SEQ = {
+    "tblPr": ["tblStyle", "tblpPr", "tblOverlap", "bidiVisual", "tblStyleRowBandSize", "tblStyleColBandSize", "tblW",
+              "jc", "tblCellSpacing", "tblInd", "tblBorders", "shd", "tblLayout", "tblCellMar", "tblLook"],
+    "tcPr": ["cnfStyle", "tcW", "gridSpan", "hMerge", "vMerge", "tcBorders", "shd", "noWrap", "tcMar", "textDirection",
+             "tcFitText", "vAlign", "hideMark"],
+    "sectPr": ["headerReference", "footerReference", "footnotePr", "endnotePr", "type", "pgSz", "pgMar", "paperSrc",
+               "pgBorders", "lnNumType", "pgNumType", "cols", "formProt", "vAlign", "noEndnote", "titlePg",
+               "textDirection", "bidi", "rtlGutter", "docGrid"],
+    "pPr": ["pStyle", "keepNext", "keepLines", "pageBreakBefore", "framePr", "widowControl", "numPr",
+            "suppressLineNumbers", "pBdr", "shd", "tabs", "suppressAutoHyphens", "kinsoku", "wordWrap", "overflowPunct",
+            "topLinePunct", "autoSpaceDE", "autoSpaceDN", "bidi", "adjustRightInd", "snapToGrid", "spacing", "ind",
+            "contextualSpacing", "mirrorIndents", "suppressOverlap", "jc", "textDirection", "textAlignment",
+            "textboxTightWrap", "outlineLvl", "divId", "cnfStyle", "rPr", "sectPr", "pPrChange"],
+    "rPr": ["rStyle", "rFonts", "b", "bCs", "i", "iCs", "caps", "smallCaps", "strike", "dstrike", "outline", "shadow",
+            "emboss", "imprint", "noProof", "snapToGrid", "vanish", "webHidden", "color", "spacing", "w", "kern",
+            "position", "sz", "szCs", "highlight", "u", "effect", "bdr", "shd", "fitText", "vertAlign", "rtl", "cs",
+            "em", "lang", "eastAsianLayout", "specVanish", "oMath"],
+}
 
-def iter_texts(doc):
-    body = doc.element.body
-    for child in body.iterchildren():
-        tag = child.tag.split('}')[1]
-        if tag == 'p':
-            yield ('p', Paragraph(child, doc).text)
-        elif tag == 'tbl':
+
+def blocks(doc):
+    for child in doc.element.body.iterchildren():
+        tag = child.tag.split("}")[1]
+        if tag == "p":
+            yield "p", Paragraph(child, doc).text
+        elif tag == "tbl":
             t = Table(child, doc)
             for row in t.rows:
-                seen=set()
+                seen = set()
                 for c in row.cells:
-                    if id(c._tc) in seen: continue
+                    if id(c._tc) in seen:
+                        continue
                     seen.add(id(c._tc))
-                    yield ('c', c.text)
+                    yield "c", c.text
 
-def check(path):
+
+def xml_order(path):
+    z = zipfile.ZipFile(path)
+    bad = collections.Counter()
+    for part in [n for n in z.namelist() if n.startswith("word/") and n.endswith(".xml")]:
+        root = etree.fromstring(z.read(part))
+        for tag, seq in SEQ.items():
+            for el in root.iter(W + tag):
+                kids = [c.tag.replace(W, "") for c in el if isinstance(c.tag, str) and c.tag.startswith(W)]
+                idx = [seq.index(k) for k in kids if k in seq]
+                dup = tag in ("tblPr", "tcPr") and len(kids) != len(set(kids))
+                if idx != sorted(idx) or dup:
+                    bad[tag + ": " + " > ".join(kids)] += 1
+    sizes = collections.Counter()
+    root = etree.fromstring(z.read("word/document.xml"))
+    for r in root.iter(W + "r"):
+        if r.find(W + "t") is None:
+            continue
+        sz = r.find(W + "rPr/" + W + "sz")
+        sizes[int(sz.get(W + "val")) / 2 if sz is not None else None] += 1
+    return bad, sizes
+
+
+def check(path, n_sources=None, sources_heading="ПЕРЕЧЕНЬ ИСПОЛЬЗОВАННЫХ ИСТОЧНИКОВ", allow_url=False):
     doc = Document(path)
-    items = list(iter_texts(doc))
-    print(f"=== {path}: {len(items)} блоков")
-    problems = []
-    in_sources = False
+    items = list(blocks(doc))
+    probs = []
+    in_src = False
     tabs, figs = [], []
-    refs_t, refs_f = {}, {}
+    rt, rf = collections.defaultdict(list), collections.defaultdict(list)
+    cites = set()
     utoch = []
-    for idx, (kind, t) in enumerate(items):
-        if t.strip().upper().startswith("ПЕРЕЧЕНЬ ИСПОЛЬЗОВАННЫХ ИСТОЧНИКОВ"):
-            in_sources = True
+    apps_first = []
+    for i, (k, t) in enumerate(items):
+        if t.strip().upper() == sources_heading:
+            in_src = True
         for pat in FORBID:
+            if allow_url and "доведено до уровня TRL 3" in t:
+                break  # формулировка строки утвержденной формы отчета о развитии
             for m in re.finditer(pat, t, flags=re.IGNORECASE):
-                problems.append((idx, pat, t[max(0,m.start()-50):m.end()+50]))
-        if not in_sources:
-            for pat in URL:
-                for m in re.finditer(pat, t, flags=re.IGNORECASE):
-                    problems.append((idx, 'URL', t[max(0,m.start()-50):m.end()+50]))
-        m = re.match(r"^Таблица (\d+) – (.+)$", t.strip())
-        if m and kind == 'p':
-            tabs.append((int(m.group(1)), idx, m.group(2)))
-        m = re.match(r"^Рисунок (\d+) – (.+)$", t.strip())
-        if m and kind == 'p':
-            figs.append((int(m.group(1)), idx, m.group(2)))
-        for m in re.finditer(r"таблиц[аеуы] (\d+)", t, flags=re.IGNORECASE):
-            refs_t.setdefault(int(m.group(1)), []).append(idx)
-        for m in re.finditer(r"рисун(?:ок|ке|ка) (\d+)", t, flags=re.IGNORECASE):
-            refs_f.setdefault(int(m.group(1)), []).append(idx)
-        for m in re.finditer(r"\[УТОЧНИТЬ[^\]]*\]", t):
-            utoch.append((idx, m.group(0), t[max(0,m.start()-60):m.start()].strip()))
-    # нумерация
-    def seq_check(name, lst):
-        nums = [n for n,_,_ in lst]
-        exp = list(range(1, len(nums)+1))
-        if nums != exp:
-            problems.append((-1, f'{name}: нумерация', f'{nums}'))
-    seq_check('Таблицы', tabs); seq_check('Рисунки', figs)
-    for n, idx, title in tabs:
-        r = [i for i in refs_t.get(n, []) if i < idx]
-        if not r:
-            problems.append((idx, 'нет ссылки до объекта', f'Таблица {n} – {title}'))
-    for n, idx, title in figs:
-        r = [i for i in refs_f.get(n, []) if i < idx]
-        if not r:
-            problems.append((idx, 'нет ссылки до объекта', f'Рисунок {n} – {title}'))
-    # ссылки на несуществующие объекты
-    for n in refs_t:
-        if n not in [x[0] for x in tabs]:
-            problems.append((-1, 'ссылка на несуществующую таблицу', str(n)))
-    for n in refs_f:
-        if n not in [x[0] for x in figs]:
-            problems.append((-1, 'ссылка на несуществующий рисунок', str(n)))
-    print(f"таблиц: {len(tabs)}, рисунков: {len(figs)}, [УТОЧНИТЬ]: {len(utoch)}")
-    for p in problems:
-        print("  ПРОБЛЕМА:", p)
-    if not problems:
-        print("  проблем не найдено")
+                probs.append(f"запрещенное «{m.group(0)}»: …{t[max(0, m.start() - 40):m.end() + 40]}…")
+        if not in_src and not allow_url and re.search(r"https?://|www\.", t):
+            probs.append(f"URL вне перечня источников: {t[:90]}")
+        m = re.match(r"^Таблица (\d+) – ", t.strip())
+        if m and k == "p":
+            tabs.append((int(m.group(1)), i))
+        m = re.match(r"^Рисунок (\d+) – ", t.strip())
+        if m and k == "p":
+            figs.append((int(m.group(1)), i))
+        if not (m and k == "p"):
+            for mm in re.finditer(r"таблиц(?:а|е|у|ы|и|ах)\s+(\d+)(?:\s+и\s+(\d+))?", t, flags=re.IGNORECASE):
+                for g in mm.groups():
+                    if g:
+                        rt[int(g)].append(i)
+            for mm in re.finditer(r"рисун(?:ок|ке|ка|ки|ках)\s+(\d+)", t, flags=re.IGNORECASE):
+                rf[int(mm.group(1))].append(i)
+        if not in_src:
+            for mm in re.finditer(r"\[(\d+(?:\s*[,–-]\s*\d+)*)\]", t):
+                for part in re.split(r"\s*,\s*", mm.group(1)):
+                    if re.search(r"[–-]", part):
+                        a, b = re.split(r"\s*[–-]\s*", part)
+                        cites.update(range(int(a), int(b) + 1))
+                    else:
+                        cites.add(int(part))
+            for mm in re.finditer(r"Приложени(?:и|е|я|ях)\s+([А-Я])\b", t):
+                if mm.group(1) not in apps_first:
+                    apps_first.append(mm.group(1))
+            for mm in re.finditer(r"приложени(?:и|е|я)\s+([А-Я])\b", t):
+                if mm.group(1) not in apps_first:
+                    apps_first.append(mm.group(1))
+        for mm in re.finditer(r"\[УТОЧНИТЬ[^\]]*\]", t):
+            utoch.append(mm.group(0))
+    for name, lst, refs in (("Таблица", tabs, rt), ("Рисунок", figs, rf)):
+        nums = [n for n, _ in lst]
+        if nums != list(range(1, len(nums) + 1)):
+            probs.append(f"{name}: нумерация {nums}")
+        for n, idx in lst:
+            if allow_url:
+                break  # отчет о развитии — утвержденная форма из одной таблицы без текста
+            if not [j for j in refs.get(n, []) if j < idx]:
+                probs.append(f"{name} {n}: нет ссылки в тексте до объекта")
+        for n in refs:
+            if n not in nums:
+                probs.append(f"{name} {n}: ссылка на несуществующий объект")
+    if n_sources:
+        miss = [i for i in range(1, n_sources + 1) if i not in cites]
+        if miss:
+            probs.append(f"не процитированы источники: {miss}")
+        extra = [c for c in cites if c > n_sources]
+        if extra:
+            probs.append(f"ссылки на несуществующие источники: {extra}")
+    bad, sizes = xml_order(path)
+    for k, v in bad.items():
+        probs.append(f"порядок XML: {v} x {k[:120]}")
+    print(f"== {path.split('/')[-1]}: блоков {len(items)}, таблиц {len(tabs)}, рисунков {len(figs)}, "
+          f"[УТОЧНИТЬ] {len(utoch)}, приложения по порядку упоминания: {''.join(apps_first) or '-'}")
+    print("   размеры шрифта (пт: кол-во прогонов):", dict(sorted(((k or 0), v) for k, v in sizes.items())))
+    for p in probs:
+        print("   ПРОБЛЕМА:", p)
+    if not probs:
+        print("   проблем нет")
     return utoch
 
-if __name__ == '__main__':
-    allu = {}
-    for p in sys.argv[1:]:
-        allu[p] = check(p)
-    with open('utochnit.txt','w',encoding='utf-8') as f:
-        for p, lst in allu.items():
-            f.write(f"\n### {p}\n")
-            for idx, tag, ctx in lst:
-                f.write(f"- [{idx}] {tag}  (контекст: …{ctx[-60:]})\n")
-    print("список [УТОЧНИТЬ] записан в utochnit.txt")
+
+if __name__ == "__main__":
+    args = sys.argv[1:]
+    for a in args:
+        path, _, ns = a.partition("::")
+        check(path, int(ns) if ns else None, allow_url="развитии" in path)
