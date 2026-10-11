@@ -14,6 +14,7 @@ from docx.shared import Pt, Mm, Cm, RGBColor
 from docx.enum.text import (WD_ALIGN_PARAGRAPH, WD_LINE_SPACING, WD_TAB_ALIGNMENT, WD_TAB_LEADER,
                             WD_COLOR_INDEX)
 from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
+from docx.enum.section import WD_ORIENT
 from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import qn, nsdecls
 from PIL import Image, ImageDraw, ImageFont
@@ -31,7 +32,7 @@ FONT_BOLD_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
 class Profile:
     def __init__(self, body, table, header_fill, list_left, list_hanging, h2_center, h2_caps,
-                 tcap_before, tcap_after, fig_before, title_page, pg_start, toc_l2_indent_cm):
+                 tcap_before, tcap_after, fig_before, title_page, pg_start, toc_l2_indent_cm, landscape=False):
         self.body = body
         self.table = table
         self.header_fill = header_fill
@@ -45,6 +46,7 @@ class Profile:
         self.title_page = title_page
         self.pg_start = pg_start
         self.toc_l2_indent_cm = toc_l2_indent_cm
+        self.landscape = landscape
 
 
 PROFILES = {
@@ -61,6 +63,10 @@ PROFILES = {
     "app": Profile(body=12, table=12, header_fill="D9E1F2", list_left=1134, list_hanging=425,
                    h2_center=True, h2_caps=True, tcap_before=9, tcap_after=3, fig_before=9,
                    title_page=False, pg_start=None, toc_l2_indent_cm=0.0),
+    # рабочий документ с данными для финансового отчета: альбомная ориентация под широкие таблицы
+    "fin": Profile(body=11, table=10, header_fill="D9E1F2", list_left=1134, list_hanging=425,
+                   h2_center=False, h2_caps=False, tcap_before=9, tcap_after=3, fig_before=6,
+                   title_page=False, pg_start=None, toc_l2_indent_cm=0.0, landscape=True),
 }
 
 
@@ -260,9 +266,15 @@ class Doc:
     def _page(self):
         P = self.P
         sec = self.doc.sections[0]
-        sec.page_width, sec.page_height = Mm(210), Mm(297)
-        sec.left_margin, sec.right_margin = Mm(30), Mm(15)
-        sec.top_margin, sec.bottom_margin = Mm(20), Mm(20)
+        if P.landscape:
+            sec.orientation = WD_ORIENT.LANDSCAPE
+            sec.page_width, sec.page_height = Mm(297), Mm(210)
+            sec.left_margin, sec.right_margin = Mm(20), Mm(15)
+            sec.top_margin, sec.bottom_margin = Mm(15), Mm(15)
+        else:
+            sec.page_width, sec.page_height = Mm(210), Mm(297)
+            sec.left_margin, sec.right_margin = Mm(30), Mm(15)
+            sec.top_margin, sec.bottom_margin = Mm(20), Mm(20)
         sec.header_distance = Mm(12.5)
         sec.footer_distance = Mm(10)
         sec.different_first_page_header_footer = P.title_page
