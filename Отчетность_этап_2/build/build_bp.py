@@ -77,8 +77,8 @@ SOURCES = [
     "https://www.beneo.com/ingredients/human-nutrition/functional-carbohydrates/isomalt (дата обращения: 09.10.2026)",
     f"Сайт стартап-проекта «Вкусноты». URL: https://{C['site']}/ (дата обращения: 09.10.2026)",
     f"Промо-продукт «Синестезия» («Вкусный трек»). URL: https://{C['promo']}/ (дата обращения: 09.10.2026)",
-    "Отчет о выполнении работ по второму этапу договора о предоставлении гранта по программе «Студенческий "
-    f"стартап» / {C['org_short']}. Москва, 2026",
+    f"Отчет о выполнении работ по второму этапу договора о предоставлении гранта № {C['contract_no']} "
+    f"от {C['contract_date']} / {C['org_short']}. Москва, 2026",
 ]
 
 ABBR = [
@@ -183,7 +183,9 @@ def title(d):
     d.title_line(f"ИНН {C['inn']}, КПП {C['kpp']}, ОГРН {C['ogrn']}")
     d.title_line("БИЗНЕС-ПЛАН ПРОЕКТА", bold=True, before=54, after=6)
     d.title_line(f"«{THEME}»", bold=True)
-    d.title_line("(продукт «Вкусноты» — съедобные музыкальные пластинки)", after=72)
+    d.title_line("(продукт «Вкусноты» — съедобные музыкальные пластинки)", after=12)
+    d.title_line(f"Договор о предоставлении гранта № {C['contract_no']} от {C['contract_date']}")
+    d.title_line(f"Заявка № {C['application_no']}", after=54)
     d.title_line(f"Получатель гранта: {C['ceo_full']}, генеральный директор")
     d.title_line(f"Адрес: {C['address']}", after=54)
     d.title_line("Москва")
