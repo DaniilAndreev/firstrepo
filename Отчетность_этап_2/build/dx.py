@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Оформление документов отчётности ФСИ по образцу сданной отчётности проекта «Опти».
+"""Оформление документов отчётности ФСИ.
 
 Профили:
-  report — отчёт о выполнении работ: TNR 12, интервал 1,5, без титульного листа, нумерация с 2;
+  report — отчёт о выполнении работ по правилам оформления Фонда (замечания от 05.11.2026): поля 30/15/20/20 мм,
+           абзацный отступ 1,25 см, интервал 1,15, Times New Roman 12 единым кеглем, без полужирного, текст по
+           ширине, заголовки по центру, номер страницы внизу по центру начиная с 2 (страница реферата);
+  app    — приложения к отчёту: то же оформление, нумерация страниц с 1;
   bp     — бизнес-план: TNR 14 (таблицы 12), титульный лист без номера;
   dev    — отчёт о развитии проекта: TNR 12, одна таблица;
-  app    — приложения к отчёту: как report, нумерация страниц с 1.
+  fin    — рабочий документ с данными финансового отчёта (альбомная ориентация).
 """
 import os
 import re
@@ -17,6 +20,7 @@ from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
 from docx.enum.section import WD_ORIENT
 from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import qn, nsdecls
+from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from PIL import Image, ImageDraw, ImageFont
 
 A = WD_ALIGN_PARAGRAPH
@@ -32,7 +36,8 @@ FONT_BOLD_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
 class Profile:
     def __init__(self, body, table, header_fill, list_left, list_hanging, h2_center, h2_caps,
-                 tcap_before, tcap_after, fig_before, title_page, pg_start, toc_l2_indent_cm, landscape=False):
+                 tcap_before, tcap_after, fig_before, title_page, pg_start, toc_l2_indent_cm, landscape=False,
+                 line=1.5, table_line=1.0, bold=True, plain_lists=False, h1_before=18, cap_align=None):
         self.body = body
         self.table = table
         self.header_fill = header_fill
@@ -47,22 +52,32 @@ class Profile:
         self.pg_start = pg_start
         self.toc_l2_indent_cm = toc_l2_indent_cm
         self.landscape = landscape
+        self.line = line                # межстрочный интервал текста
+        self.table_line = table_line    # межстрочный интервал в ячейках таблиц
+        self.bold = bold                # допускается ли полужирное начертание
+        self.plain_lists = plain_lists  # перечисления обычными абзацами с абзацного отступа
+        self.h1_before = h1_before
+        self.cap_align = cap_align      # выравнивание подписи таблицы (None — по левому краю)
 
 
 PROFILES = {
-    "report": Profile(body=12, table=12, header_fill="D9E1F2", list_left=1134, list_hanging=425,
-                      h2_center=True, h2_caps=True, tcap_before=9, tcap_after=3, fig_before=9,
-                      title_page=False, pg_start=2, toc_l2_indent_cm=0.0),
+    "report": Profile(body=12, table=12, header_fill=None, list_left=1134, list_hanging=425,
+                      h2_center=True, h2_caps=False, tcap_before=6, tcap_after=0, fig_before=6,
+                      title_page=False, pg_start=2, toc_l2_indent_cm=0.0,
+                      line=1.15, table_line=1.15, bold=False, plain_lists=True, h1_before=0,
+                      cap_align="justify"),
     "bp": Profile(body=14, table=12, header_fill="EDEDED", list_left=1069, list_hanging=360,
                   h2_center=False, h2_caps=False, tcap_before=12, tcap_after=3, fig_before=6,
                   title_page=True, pg_start=None, toc_l2_indent_cm=0.75),
     "dev": Profile(body=12, table=12, header_fill="D9D9D9", list_left=1134, list_hanging=425,
                    h2_center=False, h2_caps=False, tcap_before=6, tcap_after=3, fig_before=6,
                    title_page=False, pg_start=None, toc_l2_indent_cm=0.0),
-    # приложения к отчету — отдельные файлы в оформлении отчета, нумерация страниц с 1
-    "app": Profile(body=12, table=12, header_fill="D9E1F2", list_left=1134, list_hanging=425,
-                   h2_center=True, h2_caps=True, tcap_before=9, tcap_after=3, fig_before=9,
-                   title_page=False, pg_start=None, toc_l2_indent_cm=0.0),
+    # приложения к отчету — один файл в оформлении отчета, нумерация страниц с 1
+    "app": Profile(body=12, table=12, header_fill=None, list_left=1134, list_hanging=425,
+                   h2_center=True, h2_caps=False, tcap_before=6, tcap_after=0, fig_before=6,
+                   title_page=False, pg_start=None, toc_l2_indent_cm=0.0,
+                   line=1.15, table_line=1.15, bold=False, plain_lists=True, h1_before=0,
+                   cap_align="justify"),
     # рабочий документ с данными для финансового отчета: альбомная ориентация под широкие таблицы
     "fin": Profile(body=11, table=10, header_fill="D9E1F2", list_left=1134, list_hanging=425,
                    h2_center=False, h2_caps=False, tcap_before=9, tcap_after=3, fig_before=6,
@@ -153,7 +168,7 @@ def typo(text):
 
 
 # ------------------------------------------------------------------ разметка текста
-_MARK_RE = re.compile(r"(\[УТОЧНИТЬ[^\]]*\]|\*\*.+?\*\*)")
+_MARK_RE = re.compile(r"(\[УТОЧНИТЬ[^\]]*\]|\*\*.+?\*\*|\[\[[^\]|]+\|[^\]]+\]\])")
 
 
 class Doc:
@@ -185,18 +200,19 @@ class Doc:
         if dd is not None:
             st.remove(dd)
         sz = self.P.body * 2
+        ln = int(round(240 * self.P.line))
         dd = parse_xml(
             f'<w:docDefaults {nsdecls("w")}><w:rPrDefault><w:rPr>'
             f'<w:rFonts w:ascii="{FONT}" w:hAnsi="{FONT}" w:eastAsia="{FONT}" w:cs="{FONT}"/>'
             f'<w:sz w:val="{sz}"/><w:szCs w:val="{sz}"/><w:lang w:val="ru-RU" w:eastAsia="ru-RU" w:bidi="ar-SA"/>'
-            f'</w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="360" w:lineRule="auto"/>'
+            f'</w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="{ln}" w:lineRule="auto"/>'
             f'</w:pPr></w:pPrDefault></w:docDefaults>')
         st.insert(0, dd)
 
     def _style_font(self, s, size, bold):
         s.font.name = FONT
         s.font.size = Pt(size)
-        s.font.bold = bold
+        s.font.bold = bold if self.P.bold else (None if bold is None else False)
         s.font.italic = False
         s.font.color.rgb = RGBColor(0, 0, 0)
         rpr = s.element.get_or_add_rPr()
@@ -222,7 +238,7 @@ class Doc:
         pf.space_before = Pt(before)
         pf.space_after = Pt(after)
         pf.line_spacing_rule = WD_LINE_SPACING.MULTIPLE
-        pf.line_spacing = 1.5
+        pf.line_spacing = self.P.line
         pf.keep_with_next = keep_next
         pf.keep_together = False
 
@@ -237,15 +253,15 @@ class Doc:
         pf.space_before = Pt(0)
         pf.space_after = Pt(0)
         pf.line_spacing_rule = WD_LINE_SPACING.MULTIPLE
-        pf.line_spacing = 1.5
+        pf.line_spacing = P.line
         pf.widow_control = True
         h1 = self.doc.styles["Heading 1"]
         self._style_font(h1, P.body, True)
-        self._style_par(h1, A.CENTER, 0, 0 if self.kind == "bp" else 18, 12)
+        self._style_par(h1, A.CENTER, 0, 0 if self.kind == "bp" else P.h1_before, 12)
         h2 = self.doc.styles["Heading 2"]
         self._style_font(h2, P.body, True)
         if P.h2_center:
-            self._style_par(h2, A.CENTER, 0, 12, 6)
+            self._style_par(h2, A.CENTER, 0, 12, 6 if P.bold else 12)
         else:
             self._style_par(h2, A.JUSTIFY, 1.25, 12, 6)
         h3 = self.doc.styles["Heading 3"]
@@ -327,6 +343,48 @@ class Doc:
         return nid
 
     # ---------------------------------------------------------------- текст
+    def _run_font(self, r, size, bold=None, italic=None):
+        r.font.name = FONT
+        r.font.size = Pt(size)
+        rpr = r._element.get_or_add_rPr()
+        rf = rpr.find(qn("w:rFonts"))
+        for a in ("w:ascii", "w:hAnsi", "w:eastAsia", "w:cs"):
+            rf.set(qn(a), FONT)
+        if bold is not None and self.P.bold:
+            r.font.bold = bold
+        if italic is not None:
+            r.font.italic = italic
+
+    def _hyperlink(self, par, text, url, size):
+        """Кликабельная внешняя ссылка: w:hyperlink со связью типа hyperlink (TargetMode=External)."""
+        rid = par.part.relate_to(url, RT.HYPERLINK, is_external=True)
+        h = OxmlElement("w:hyperlink")
+        h.set(qn("r:id"), rid)
+        h.set(qn("w:history"), "1")
+        r = OxmlElement("w:r")
+        rpr = OxmlElement("w:rPr")
+        rf = OxmlElement("w:rFonts")
+        for a in ("w:ascii", "w:hAnsi", "w:eastAsia", "w:cs"):
+            rf.set(qn(a), FONT)
+        rpr.append(rf)
+        col = OxmlElement("w:color")
+        col.set(qn("w:val"), "0563C1")
+        rpr.append(col)
+        for tag in ("w:sz", "w:szCs"):
+            e = OxmlElement(tag)
+            e.set(qn("w:val"), str(int(size * 2)))
+            rpr.append(e)
+        u = OxmlElement("w:u")
+        u.set(qn("w:val"), "single")
+        rpr.append(u)
+        r.append(rpr)
+        t = OxmlElement("w:t")
+        t.text = text
+        t.set(qn("xml:space"), "preserve")
+        r.append(t)
+        h.append(r)
+        par._p.append(h)
+
     def _runs(self, par, text, size=None, bold=None, italic=None):
         text = typo(self.R(text))
         size = size or self.P.body
@@ -337,26 +395,22 @@ class Doc:
             hl = False
             if part.startswith("[УТОЧНИТЬ"):
                 hl = True
+            elif part.startswith("[[") and part.endswith("]]"):
+                label, url = part[2:-2].split("|", 1)
+                self._hyperlink(par, label, url, size)
+                continue
             elif part.startswith("**") and part.endswith("**") and len(part) > 4:
                 part = part[2:-2]
                 b = True
             r = par.add_run(part)
-            r.font.name = FONT
-            r.font.size = Pt(size)
-            rpr = r._element.get_or_add_rPr()
-            rf = rpr.find(qn("w:rFonts"))
-            for a in ("w:ascii", "w:hAnsi", "w:eastAsia", "w:cs"):
-                rf.set(qn(a), FONT)
-            if b is not None:
-                r.font.bold = b
-            if italic is not None:
-                r.font.italic = italic
+            self._run_font(r, size, b, italic)
             if hl:
                 r.font.highlight_color = WD_COLOR_INDEX.YELLOW
         return par
 
-    def _pf(self, par, align=A.JUSTIFY, first=True, before=0, after=0, line=1.5, keep_next=False,
+    def _pf(self, par, align=A.JUSTIFY, first=True, before=0, after=0, line=None, keep_next=False,
             page_break_before=False, left_cm=None):
+        line = line or self.P.line
         pf = par.paragraph_format
         pf.alignment = align
         pf.first_line_indent = Cm(1.25) if first is True else Cm(first or 0)
@@ -372,24 +426,25 @@ class Doc:
         return par
 
     def p(self, text, align=A.JUSTIFY, first=True, bold=None, italic=None, size=None, before=0, after=0,
-          line=1.5, keep_next=False, page_break_before=False, left_cm=None):
+          line=None, keep_next=False, page_break_before=False, left_cm=None):
         par = self.doc.add_paragraph()
         self._pf(par, align, first, before, after, line, keep_next, page_break_before, left_cm)
         self._runs(par, text, size, bold, italic)
         return par
 
-    def empty(self, line=1.0, size=None):
+    def empty(self, line=None, size=None):
         par = self.doc.add_paragraph()
-        self._pf(par, A.LEFT, 0, 0, 0, line)
+        self._pf(par, A.JUSTIFY if self.P.plain_lists else A.LEFT, 0, 0, 0,
+                 line or (self.P.line if self.P.plain_lists else 1.0))
         r = par.add_run("")
-        r.font.size = Pt(size or self.P.body)
+        self._run_font(r, size or self.P.body)
         return par
 
     # ---------------------------------------------------------------- заголовки
     def struct_title(self, text, page_break=True):
         """Заголовок структурного элемента вне оглавления (РЕФЕРАТ, СОДЕРЖАНИЕ): по центру, жирный."""
         par = self.doc.add_paragraph()
-        self._pf(par, A.CENTER, 0, 0 if self.kind == "bp" else 18, 12, 1.5, True, page_break)
+        self._pf(par, A.CENTER, 0, 0 if self.kind == "bp" else self.P.h1_before, 12, None, True, page_break)
         self._runs(par, text.upper(), bold=True)
         return par
 
@@ -428,7 +483,7 @@ class Doc:
         pf.space_before = Pt(0)
         pf.space_after = Pt(0)
         pf.line_spacing_rule = WD_LINE_SPACING.MULTIPLE
-        pf.line_spacing = 1.5
+        pf.line_spacing = self.P.line
         pf.keep_with_next = keep_next
         self._runs(par, text)
         return par
@@ -443,9 +498,17 @@ class Doc:
 
     def bullets(self, items, end=";", last_end="."):
         for t in self._ends(items, end, last_end):
-            self._list_par(t, self.num_bullet)
+            if self.P.plain_lists:
+                # перечисление с абзацного отступа: обычный абзац, начинающийся с тире
+                self.p(DASH + NBSP + t)
+            else:
+                self._list_par(t, self.num_bullet)
 
     def numbered(self, items, end=";", last_end=".", align=A.JUSTIFY):
+        if self.P.plain_lists:
+            for i, t in enumerate(self._ends(items, end, last_end), start=1):
+                self.p(f"{i}." + NBSP + t, align=align)
+            return
         nid = self._add_num(91, restart=True)
         for t in self._ends(items, end, last_end):
             self._list_par(t, nid, align=align)
@@ -455,10 +518,12 @@ class Doc:
         cell.text = ""
         lines = str(text).split("\n")
         par = cell.paragraphs[0]
+        for r in list(par.runs):          # пустой прогон без шрифта, который оставляет cell.text = ""
+            r._element.getparent().remove(r._element)
         for li, line in enumerate(lines):
             if li > 0:
                 par = cell.add_paragraph()
-            self._pf(par, align, 0, 0, 0, 1.0)
+            self._pf(par, align, 0, 0, 0, self.P.table_line)
             self._runs(par, line, size, bold)
         cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
         if fill:
@@ -471,13 +536,17 @@ class Doc:
 
     def table(self, number, title, header, rows, widths_mm, size=None, align_cols=None, merge_rows=None,
               caption=True, header_fill=None, bold_rows=None, keep_together=None, head_rows=None,
-              cant_split=True):
+              cant_split=True, page_break=False):
         P = self.P
         size = size or P.table
         if caption:
             cap = self.doc.add_paragraph()
-            self._pf(cap, A.LEFT, 0, P.tcap_before, P.tcap_after, 1.5, True)
+            self._pf(cap, A.JUSTIFY if P.cap_align == "justify" else A.LEFT, 0, P.tcap_before, P.tcap_after,
+                     None, True)
             self._runs(cap, f"Таблица {self.R(str(number))} {DASH} {title}")
+            if page_break:   # таблица целиком на следующей странице
+                cap.paragraph_format.page_break_before = True
+                cap.paragraph_format.space_before = Pt(0)
         ncols = len(header)
         t = self.doc.add_table(rows=1, cols=ncols)
         t.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -523,7 +592,7 @@ class Doc:
                 r._tr.get_or_add_trPr().append(OxmlElement("w:cantSplit"))
             if ri in merge_rows:
                 m = r.cells[0].merge(r.cells[ncols - 1])
-                self._cell(m, row[0], size, True, A.CENTER, "F2F2F2")
+                self._cell(m, row[0], size, True, A.CENTER, "F2F2F2" if P.bold else None)
                 continue
             if ri in head_rows:
                 for ci in range(ncols):
@@ -566,10 +635,12 @@ class Doc:
     def figure(self, number, title, path, width_mm=150):
         P = self.P
         par = self.doc.add_paragraph()
-        self._pf(par, A.CENTER, 0, P.fig_before, 3, 1.0, True)
-        par.add_run().add_picture(path, width=Mm(width_mm))
+        self._pf(par, A.CENTER, 0, P.fig_before, 3, 1.0 if P.bold else P.line, True)
+        r = par.add_run()
+        self._run_font(r, P.body)
+        r.add_picture(path, width=Mm(width_mm))
         cap = self.doc.add_paragraph()
-        self._pf(cap, A.CENTER, 0, 0, 6, 1.5)
+        self._pf(cap, A.CENTER, 0, 0, 6)
         self._runs(cap, f"Рисунок {self.R(str(number))} {DASH} {title}")
         return par
 
@@ -583,7 +654,7 @@ class Doc:
     def toc_entry(self, text, page, level=1):
         par = self.doc.add_paragraph()
         left = self.P.toc_l2_indent_cm if level == 2 else 0
-        self._pf(par, A.LEFT, 0, 0, 0, 1.5, left_cm=left)
+        self._pf(par, A.LEFT, 0, 0, 0, None, left_cm=left)
         par.paragraph_format.tab_stops.add_tab_stop(Pt(TEXT_W_TW / 20), WD_TAB_ALIGNMENT.RIGHT,
                                                     WD_TAB_LEADER.DOTS)
         self._runs(par, f"{text}\t{page}")
@@ -591,7 +662,7 @@ class Doc:
 
     def title_line(self, text, bold=False, before=0, after=0, size=None, align=A.CENTER):
         par = self.doc.add_paragraph()
-        self._pf(par, align, 0, before, after, 1.5)
+        self._pf(par, align, 0, before, after)
         self._runs(par, text, size, bold)
         return par
 
